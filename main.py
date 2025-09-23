@@ -101,22 +101,27 @@ def upload_to_facebook(file_path, title, description, cache):
             files={"source": f}
         )
 
-    if not r.ok:
-        raise RuntimeError(f"Facebook API error: {r.text}")
+    fb_response = r.json()
+    print(f"DEBUG: Facebook response: {fb_response}")
 
-    # Save in cache
+    # Raise error if upload failed
+    if not r.ok or "error" in fb_response:
+        raise RuntimeError(f"Facebook API error: {fb_response.get('error')}")
+
+    # ✅ Update cache with YouTube video ID
     cache["posted_ids"].append(video_id)
     save_cache(cache)
 
-    # Print video URL
-    fb_response = r.json()
-    video_url = f"https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{fb_response.get('id')}"
+    video_fb_id = fb_response.get("id") or fb_response.get("video_id")
     print(f"[SUCCESS] Posted video: {title}")
-    print(f"📺 Video URL: {video_url}")
+    print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{video_fb_id}")
 
 # --- MAIN ---
 def main():
     cache = load_cache()
+    if "posted_ids" not in cache:
+        cache["posted_ids"] = []
+
     videos = fetch_videos_past_24h()
     if not videos:
         print("No new videos in the past 24 hours.")
@@ -129,7 +134,7 @@ def main():
             file_path = download_video(video["id"])
             upload_to_facebook(file_path, video["title"], video["description"], cache)
             
-            # Delete the local video after successful upload
+            # Delete local video after successful upload
             if Path(file_path).exists():
                 Path(file_path).unlink()
                 print(f"🗑 Deleted local file: {file_path}")
