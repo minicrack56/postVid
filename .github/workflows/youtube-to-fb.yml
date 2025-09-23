@@ -1,5 +1,8 @@
 name: Daily YouTube to Facebook
 
+permissions:
+  contents: write  # <-- allows updating posted_cache.json
+
 on:
   schedule:
     # Runs every day at 08:00 UTC
