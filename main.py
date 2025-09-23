@@ -3,24 +3,18 @@ import os
 import json
 import subprocess
 from pathlib import Path
-from datetime import datetime, timezone
-import base64
+from datetime import datetime
 import requests
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
+CHANNEL_ID = "UC_i8X3p8oZNaik8X513Zn1Q"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
-YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES")  # base64-encoded cookies
 
-if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN, YOUTUBE_COOKIES_B64]):
+if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN]):
     raise RuntimeError("❌ Missing one of the required environment variables.")
-
-# --- Restore cookies.txt ---
-cookies_path = Path("cookies.txt")
-cookies_path.write_bytes(base64.b64decode(YOUTUBE_COOKIES_B64))
 
 # --- CACHE UTILITIES ---
 def load_cache():
@@ -55,9 +49,8 @@ def fetch_latest_videos(max_results=5):
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
         title = snippet["title"]
-        description = snippet.get("description", "")
         publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
-        videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
+        videos.append({"id": vid, "title": title, "publishedAt": publish_time})
     return videos
 
 # --- DOWNLOAD VIDEO ---
@@ -66,7 +59,6 @@ def download_video(video_id):
     output_file = f"{video_id}.mp4"
     cmd = [
         "yt-dlp",
-        "--cookies", "cookies.txt",
         "-f", "b[ext=mp4]",
         "-o", output_file,
         url
@@ -75,7 +67,7 @@ def download_video(video_id):
     return output_file
 
 # --- UPLOAD TO FACEBOOK ---
-def upload_to_facebook(file_path, title, description, cache):
+def upload_to_facebook(file_path, title, cache):
     video_id = Path(file_path).stem
 
     if video_id in cache["posted_ids"]:
@@ -89,7 +81,7 @@ def upload_to_facebook(file_path, title, description, cache):
             params={
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
-                "description": description,
+                "description": title,  # Use YouTube title as description
                 "published": True,
                 "privacy": '{"value":"EVERYONE"}'
             },
@@ -132,7 +124,7 @@ def main():
         print(f"🎬 Processing: {video['title']} ({video['id']})")
         try:
             file_path = download_video(video["id"])
-            upload_to_facebook(file_path, video["title"], video["description"], cache)
+            upload_to_facebook(file_path, video["title"], cache)
             
             # Delete local file
             if Path(file_path).exists():
@@ -140,7 +132,7 @@ def main():
                 print(f"🗑 Deleted local file: {file_path}")
 
         except subprocess.CalledProcessError:
-            print(f"⚠️ Skipping video {video['id']} (failed download or requires login)")
+            print(f"⚠️ Skipping video {video['id']} (failed download)")
         except Exception as e:
             print(f"⚠️ Error processing video {video['id']}: {e}")
 
