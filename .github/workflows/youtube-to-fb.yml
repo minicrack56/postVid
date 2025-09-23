@@ -2,27 +2,32 @@ name: YouTube → Facebook Video
 
 on:
   schedule:
-    - cron: "0 12 * * *"   # runs daily at 12:00 UTC
-  workflow_dispatch:
+    - cron: "0 12 * * *"   # runs every day at 12:00 UTC
+  workflow_dispatch:       # allows manual trigger
 
 jobs:
   post-video:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout your repository
       - uses: actions/checkout@v4
 
+      # 2️⃣ Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # 3️⃣ Install dependencies
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt yt-dlp
 
+      # 4️⃣ Run main.py with environment variables
       - name: Run script
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}   # base64-encoded cookies.txt
         run: python main.py
