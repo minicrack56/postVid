@@ -10,7 +10,7 @@ import requests
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CHANNEL_ID = "UC_i8X3p8oZNaik8X513Zn1Q"
+CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES")  # base64-encoded cookies
@@ -55,84 +55,80 @@ def fetch_latest_videos(max_results=5):
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
         title = snippet["title"]
-        thumbnail_url = snippet["thumbnails"]["high"]["url"]
         publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
+        thumbnail_url = snippet["thumbnails"]["high"]["url"]  # high-quality thumbnail
         videos.append({
             "id": vid,
             "title": title,
-            "thumbnail_url": thumbnail_url,
-            "publishedAt": publish_time
+            "publishedAt": publish_time,
+            "thumbnail": thumbnail_url
         })
     return videos
 
-# --- DOWNLOAD VIDEO ---
+# --- DOWNLOAD VIDEO (best quality) ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
     output_file = f"{video_id}.mp4"
     cmd = [
         "yt-dlp",
         "--cookies", "cookies.txt",
-        "-f", "bestvideo+bestaudio/best",  # best quality
+        "-f", "b[ext=mp4]",  # best quality mp4
         "-o", output_file,
         url
     ]
-    try:
-        subprocess.run(cmd, check=True)
-        print(f"[SUCCESS] Downloaded: {output_file}")
-        return output_file
-    except subprocess.CalledProcessError:
-        print(f"⚠️ Failed to download video {video_id}. Possible expired cookies.")
-        return None
+    subprocess.run(cmd, check=True)
+    return output_file
 
 # --- DOWNLOAD THUMBNAIL ---
-def download_thumbnail(thumbnail_url, video_id):
-    response = requests.get(thumbnail_url)
+def download_thumbnail(url, video_id):
+    response = requests.get(url)
     if response.status_code == 200:
-        file_path = f"{video_id}_thumb.jpg"
-        with open(file_path, "wb") as f:
+        thumb_file = f"{video_id}.jpg"
+        with open(thumb_file, "wb") as f:
             f.write(response.content)
-        return file_path
-    print(f"⚠️ Failed to download thumbnail for {video_id}")
+        return thumb_file
     return None
 
-# --- UPLOAD TO FACEBOOK ---
-def upload_to_facebook(video_file, thumbnail_file, title, cache):
+# --- UPLOAD TO FACEBOOK (using YouTube title only and thumbnail) ---
+def upload_to_facebook(video_file, title, thumbnail_file, cache):
     video_id = Path(video_file).stem
     if video_id in cache["posted_ids"]:
         print(f"⏩ Already posted: {title}")
-        return False
+        return
 
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
-    with open(video_file, "rb") as f_video, open(thumbnail_file, "rb") as f_thumb:
-        r = requests.post(
-            url,
-            params={
-                "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
-                "title": title,
-                "description": title,  # Only the YouTube title as caption
-                "published": True,
-                "privacy": '{"value":"EVERYONE"}'
-            },
-            files={
-                "source": f_video,
-                "thumb": f_thumb
-            }
-        )
+    files = {"source": open(video_file, "rb")}
+    if thumbnail_file and Path(thumbnail_file).exists():
+        files["thumb"] = open(thumbnail_file, "rb")
+
+    r = requests.post(
+        url,
+        params={
+            "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
+            "title": title,
+            "description": title,  # only YouTube title
+            "published": "true"
+        },
+        files=files
+    )
 
     fb_response = r.json()
     print(f"DEBUG: Facebook response: {fb_response}")
 
+    # Close files
+    for f in files.values():
+        f.close()
+
     if not r.ok or "error" in fb_response:
         raise RuntimeError(f"Facebook API error: {fb_response.get('error')}")
 
-    # Update cache after successful upload
+    # Update cache
     cache["posted_ids"].append(video_id)
     save_cache(cache)
 
-    video_fb_id = fb_response.get("id")
+    fb_video_id = fb_response.get("id")
     print(f"[SUCCESS] Posted video: {title}")
-    print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{video_fb_id}")
-    return True
+    print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{fb_video_id}")
 
 # --- MAIN ---
 def main():
@@ -148,28 +144,23 @@ def main():
         print("No new videos to post.")
         return
 
-    # Post oldest first
-    for video in reversed(new_videos):
+    for video in reversed(new_videos):  # post oldest first
         print(f"🎬 Processing: {video['title']} ({video['id']})")
-        video_file = download_video(video["id"])
-        if not video_file:
-            continue
-
-        thumbnail_file = download_thumbnail(video["thumbnail_url"], video["id"])
-        if not thumbnail_file:
-            # If thumbnail fails, still upload video without thumbnail
-            thumbnail_file = None
-
         try:
-            upload_to_facebook(video_file, thumbnail_file if thumbnail_file else video_file, video["title"], cache)
-        except Exception as e:
-            print(f"⚠️ Error uploading video {video['id']}: {e}")
-        finally:
+            video_file = download_video(video["id"])
+            thumb_file = download_thumbnail(video["thumbnail"], video["id"])
+            upload_to_facebook(video_file, video["title"], thumb_file, cache)
+
             # Delete local files
-            if Path(video_file).exists():
-                Path(video_file).unlink()
-            if thumbnail_file and Path(thumbnail_file).exists():
-                Path(thumbnail_file).unlink()
+            for f in [video_file, thumb_file]:
+                if f and Path(f).exists():
+                    Path(f).unlink()
+                    print(f"🗑 Deleted local file: {f}")
+
+        except subprocess.CalledProcessError:
+            print(f"⚠️ Skipping video {video['id']} (failed download or requires login)")
+        except Exception as e:
+            print(f"⚠️ Error processing video {video['id']}: {e}")
 
     print(f"✅ Done. {len(new_videos)} new videos processed.")
 
