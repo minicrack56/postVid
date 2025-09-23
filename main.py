@@ -82,6 +82,7 @@ def download_video(video_id):
     return output_file
 
 # --- UPLOAD TO FACEBOOK ---
+# --- UPLOAD TO FACEBOOK ---
 def upload_to_facebook(file_path, title, cache):
     video_id = Path(file_path).stem
 
@@ -89,18 +90,18 @@ def upload_to_facebook(file_path, title, cache):
         print(f"⏩ Already posted: {title}")
         return
 
+    # Upload video
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
     with open(file_path, "rb") as f:
         r = requests.post(
             url,
-            params={
-                "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
+            params={"access_token": FACEBOOK_PAGE_ACCESS_TOKEN},
+            data={
                 "title": title,
                 "description": title,  # Only YouTube title as description
-                "published": True,
-                "privacy": '{"value":"EVERYONE"}'
+                "published": "true",
             },
-            files={"source": f}
+            files={"source": f},
         )
 
     fb_response = r.json()
@@ -116,28 +117,6 @@ def upload_to_facebook(file_path, title, cache):
     video_fb_id = fb_response.get("id") or fb_response.get("video_id")
     print(f"[SUCCESS] Posted video: {title}")
     print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{video_fb_id}")
-
-    # --- Upload thumbnail ---
-    thumb_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-    thumb_resp = requests.get(thumb_url, stream=True)
-    if thumb_resp.status_code != 200:
-        thumb_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-        thumb_resp = requests.get(thumb_url, stream=True)
-
-    if thumb_resp.ok:
-        thumb_file = f"{video_id}_thumb.jpg"
-        with open(thumb_file, "wb") as t:
-            for chunk in thumb_resp.iter_content(1024):
-                t.write(chunk)
-
-        thumb_url_fb = f"https://graph.facebook.com/v21.0/{video_fb_id}/thumbnails"
-        thumb_upload = requests.post(
-            thumb_url_fb,
-            params={"access_token": FACEBOOK_PAGE_ACCESS_TOKEN},
-            files={"source": open(thumb_file, "rb")}
-        )
-        print(f"DEBUG: Thumbnail upload response: {thumb_upload.json()}")
-        Path(thumb_file).unlink()
 
 # --- MAIN ---
 def main():
