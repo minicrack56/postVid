@@ -83,6 +83,7 @@ def upload_to_facebook(file_path, title, description, cache):
         print(f"⏩ Already posted: {title}")
         return
 
+    import requests
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
     with open(file_path, "rb") as f:
         r = requests.post(
@@ -116,8 +117,16 @@ def main():
         try:
             file_path = download_video(video["id"])
             upload_to_facebook(file_path, video["title"], video["description"], cache)
+            
+            # Delete the local video after successful upload
+            if Path(file_path).exists():
+                Path(file_path).unlink()
+                print(f"🗑 Deleted local file: {file_path}")
+
         except subprocess.CalledProcessError:
             print(f"⚠️ Skipping video {video['id']} (requires login or failed download)")
+        except Exception as e:
+            print(f"⚠️ Error processing video {video['id']}: {e}")
 
     print(f"✅ Done. {len(videos)} videos processed today.")
 
