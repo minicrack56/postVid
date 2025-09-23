@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import requests
-from pytubefix import YouTube
+from pytubefix import YouTube  # ensure you installed: pip install pytubefix
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
@@ -57,14 +57,14 @@ def fetch_latest_videos(max_results=5):
 # --- DOWNLOAD VIDEO ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
-    yt = YouTube(url)
-    # Get a medium/normal quality progressive stream (prefer 480p)
+    # Use pytubefix with use_po_token=True to bypass bot detection
+    yt = YouTube(url, use_po_token=True)
+
+    # Progressive stream with normal/medium quality (480p if available)
     stream = yt.streams.filter(progressive=True, file_extension="mp4", res="480p").first()
     if not stream:
-        # fallback to highest available progressive stream
-        stream = yt.streams.filter(progressive=True, file_extension="mp4").order_by('resolution').desc().first()
-    if not stream:
-        raise RuntimeError(f"No downloadable video streams found for {video_id}")
+        # fallback to highest available if 480p not found
+        stream = yt.streams.get_highest_resolution()
     output_file = f"{video_id}.mp4"
     stream.download(filename=output_file)
     return output_file
