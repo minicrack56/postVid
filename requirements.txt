@@ -1,4 +1,4 @@
 requests
-yt-dlp
+pytubefix
 google-api-python-client
-pytube
+
