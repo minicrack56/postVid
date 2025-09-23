@@ -54,12 +54,31 @@ def fetch_latest_videos(max_results=5):
     return videos
 
 # --- DOWNLOAD VIDEO (normal quality) ---
+# --- DOWNLOAD VIDEO ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
     yt = YouTube(url)
-    stream = yt.streams.filter(progressive=True, file_extension="mp4").order_by("resolution").asc().first()
+
+    # Try to get 360p progressive MP4 (normal quality, with audio)
+    stream = yt.streams.filter(progressive=True, file_extension="mp4", res="360p").first()
+
+    # If 360p not available, fallback to highest progressive
+    if not stream:
+        stream = yt.streams.filter(progressive=True, file_extension="mp4").order_by("resolution").desc().first()
+
+    if not stream:
+        raise RuntimeError(f"No valid progressive MP4 stream found for video {video_id}")
+
     output_file = f"{video_id}.mp4"
     stream.download(filename=output_file)
+
+    # Debug: print file details
+    file_size = Path(output_file).stat().st_size
+    print(f"✅ Downloaded {output_file} | resolution={stream.resolution}, filesize={file_size/1024/1024:.2f} MB")
+
+    if file_size < 500 * 1024:  # less than 500 KB
+        raise RuntimeError(f"Downloaded file too small, likely corrupted: {output_file}")
+
     return output_file
 
 # --- UPLOAD TO FACEBOOK ---
