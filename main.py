@@ -3,14 +3,14 @@ import os
 import json
 import subprocess
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import base64
 import requests
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
+CHANNEL_ID = "UC_i8X3p8oZNaik8X513Zn1Q"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES")  # base64-encoded cookies
@@ -55,9 +55,9 @@ def fetch_latest_videos(max_results=5):
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
         title = snippet["title"]
+        description = snippet.get("description", "")
         publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
-        # Only use title as description
-        videos.append({"id": vid, "title": title, "description": title, "publishedAt": publish_time})
+        videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
     return videos
 
 # --- DOWNLOAD VIDEO ---
@@ -67,7 +67,7 @@ def download_video(video_id):
     cmd = [
         "yt-dlp",
         "--cookies", "cookies.txt",
-        "-f", "b[ext=mp4]",  # best quality mp4
+        "-f", "b[ext=mp4]",
         "-o", output_file,
         url
     ]
@@ -89,7 +89,7 @@ def upload_to_facebook(file_path, title, description, cache):
             params={
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
-                "description": description,  # only title
+                "description": description,
                 "published": True,
                 "privacy": '{"value":"EVERYONE"}'
             },
