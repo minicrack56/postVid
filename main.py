@@ -77,6 +77,9 @@ def download_video(video_id):
 def upload_to_facebook(file_path, title, cache):
     video_id = Path(file_path).stem
 
+    # YouTube thumbnail URL
+    thumb_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
     with open(file_path, "rb") as f:
         r = requests.post(
@@ -84,9 +87,10 @@ def upload_to_facebook(file_path, title, cache):
             params={
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
-                "description": title,  # <-- Only use YouTube title as caption
+                "description": title,  # Only use YouTube title
                 "published": True,
-                "privacy": '{"value":"EVERYONE"}'
+                "privacy": '{"value":"EVERYONE"}',
+                "thumb": thumb_url  # Set YouTube thumbnail as Facebook thumbnail
             },
             files={"source": f}
         )
