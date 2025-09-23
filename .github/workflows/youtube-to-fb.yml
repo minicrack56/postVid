@@ -5,9 +5,8 @@ permissions:
 
 on:
   schedule:
-    # Runs every day at 08:00 UTC
-    - cron: '0 8 * * *'
-  workflow_dispatch: # Manual run option
+    - cron: '0 8 * * *'  # Every day at 08:00 UTC
+  workflow_dispatch:
 
 jobs:
   post_videos:
@@ -24,19 +23,20 @@ jobs:
         with:
           python-version: 3.11
 
-      # 3️⃣ Install dependencies
+      # 3️⃣ Install dependencies (latest pytubefix from GitHub)
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pytubefix
+          pip install requests
+          pip install git+https://github.com/JuanBindez/pytubefix.git@main
 
-      # 4️⃣ Run main.py with environment variables
+      # 4️⃣ Run main.py
       - name: Run main.py
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
-          YOUTUBE_PO_TOKEN: ${{ secrets.YOUTUBE_PO_TOKEN }}  # PO token for pytubefix
+          YOUTUBE_PO_TOKEN: ${{ secrets.YOUTUBE_PO_TOKEN }}  # put the poToken string only
         run: python main.py
 
       # 5️⃣ Commit updated posted_cache.json back to repo
