@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import requests
-from pytubefix import YouTube
+from pytubefix import YouTube  # make sure pytubefix is installed
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
@@ -12,7 +12,7 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
-YOUTUBE_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN")  # visitorData token
+YOUTUBE_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN")  # just the poToken string
 
 if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN, YOUTUBE_PO_TOKEN]):
     raise RuntimeError("❌ Missing one of the required environment variables.")
@@ -58,12 +58,11 @@ def fetch_latest_videos(max_results=5):
 # --- DOWNLOAD VIDEO USING pytubefix WITH PO TOKEN ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
-    yt = YouTube(url, use_po_token=True, po_token=YOUTUBE_PO_TOKEN)
+    yt = YouTube(url, use_po_token=True, po_token=YOUTUBE_PO_TOKEN)  # poToken authentication
 
     # Progressive stream with medium quality (480p)
     stream = yt.streams.filter(progressive=True, file_extension="mp4", res="480p").first()
     if not stream:
-        # fallback to highest available
         stream = yt.streams.get_highest_resolution()
 
     output_file = f"{video_id}.mp4"
@@ -98,7 +97,6 @@ def upload_to_facebook(file_path, title, description, cache):
     if not r.ok or "error" in fb_response:
         raise RuntimeError(f"Facebook API error: {fb_response.get('error')}")
 
-    # Update cache
     cache["posted_ids"].append(video_id)
     save_cache(cache)
 
@@ -117,20 +115,17 @@ def main():
         print("No videos found.")
         return
 
-    # Filter only videos not in cache
     new_videos = [v for v in videos if v["id"] not in cache["posted_ids"]]
     if not new_videos:
         print("No new videos to post.")
         return
 
-    # Post oldest first
     for video in reversed(new_videos):
         print(f"🎬 Processing: {video['title']} ({video['id']})")
         try:
             file_path = download_video(video["id"])
             upload_to_facebook(file_path, video["title"], video["description"], cache)
 
-            # Delete local file
             if Path(file_path).exists():
                 Path(file_path).unlink()
                 print(f"🗑 Deleted local file: {file_path}")
