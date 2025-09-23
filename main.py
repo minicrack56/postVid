@@ -10,7 +10,7 @@ import requests
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
+CHANNEL_ID = "UC_i8X3p8oZNaik8X513Zn1Q"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES")  # base64-encoded cookies
@@ -55,24 +55,26 @@ def fetch_latest_videos(max_results=5):
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
         title = snippet["title"]
+        description = snippet.get("description", "")
         publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
-        thumbnail_url = snippet["thumbnails"]["high"]["url"]  # high-quality thumbnail
+        thumbnail_url = snippet["thumbnails"]["high"]["url"]  # High quality thumbnail
         videos.append({
             "id": vid,
             "title": title,
+            "description": description,
             "publishedAt": publish_time,
             "thumbnail": thumbnail_url
         })
     return videos
 
-# --- DOWNLOAD VIDEO (best quality) ---
+# --- DOWNLOAD VIDEO ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
     output_file = f"{video_id}.mp4"
     cmd = [
         "yt-dlp",
         "--cookies", "cookies.txt",
-        "-f", "b[ext=mp4]",  # best quality mp4
+        "-f", "b[ext=mp4]",
         "-o", output_file,
         url
     ]
@@ -89,15 +91,15 @@ def download_thumbnail(url, video_id):
         return thumb_file
     return None
 
-# --- UPLOAD TO FACEBOOK (using YouTube title only and thumbnail) ---
-def upload_to_facebook(video_file, title, thumbnail_file, cache):
-    video_id = Path(video_file).stem
+# --- UPLOAD TO FACEBOOK (thumbnail added only) ---
+def upload_to_facebook(file_path, title, description, thumbnail_file, cache):
+    video_id = Path(file_path).stem
     if video_id in cache["posted_ids"]:
         print(f"⏩ Already posted: {title}")
         return
 
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
-    files = {"source": open(video_file, "rb")}
+    files = {"source": open(file_path, "rb")}
     if thumbnail_file and Path(thumbnail_file).exists():
         files["thumb"] = open(thumbnail_file, "rb")
 
@@ -106,8 +108,8 @@ def upload_to_facebook(video_file, title, thumbnail_file, cache):
         params={
             "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
             "title": title,
-            "description": title,  # only YouTube title
-            "published": "true"
+            "description": description,
+            "published": True
         },
         files=files
     )
@@ -126,13 +128,16 @@ def upload_to_facebook(video_file, title, thumbnail_file, cache):
     cache["posted_ids"].append(video_id)
     save_cache(cache)
 
-    fb_video_id = fb_response.get("id")
+    fb_video_id = fb_response.get("id") or fb_response.get("video_id")
     print(f"[SUCCESS] Posted video: {title}")
     print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{fb_video_id}")
 
 # --- MAIN ---
 def main():
     cache = load_cache()
+    if "posted_ids" not in cache:
+        cache["posted_ids"] = []
+
     videos = fetch_latest_videos()
     if not videos:
         print("No videos found.")
@@ -149,7 +154,7 @@ def main():
         try:
             video_file = download_video(video["id"])
             thumb_file = download_thumbnail(video["thumbnail"], video["id"])
-            upload_to_facebook(video_file, video["title"], thumb_file, cache)
+            upload_to_facebook(video_file, video["title"], video["description"], thumb_file, cache)
 
             # Delete local files
             for f in [video_file, thumb_file]:
