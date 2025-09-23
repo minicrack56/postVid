@@ -78,20 +78,25 @@ def download_video(video_id):
 
 # --- UPLOAD TO FACEBOOK ---
 def upload_to_facebook(file_path, title, description, cache):
+    import requests
     video_id = Path(file_path).stem
+
+    # Skip if already posted
     if video_id in cache["posted_ids"]:
         print(f"⏩ Already posted: {title}")
         return
 
-    import requests
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
+
     with open(file_path, "rb") as f:
         r = requests.post(
             url,
             params={
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
-                "description": description
+                "description": description,
+                "published": True,                  # Publish immediately
+                "privacy": '{"value":"EVERYONE"}'   # Public
             },
             files={"source": f}
         )
@@ -99,9 +104,15 @@ def upload_to_facebook(file_path, title, description, cache):
     if not r.ok:
         raise RuntimeError(f"Facebook API error: {r.text}")
 
-    print(f"[SUCCESS] Posted video: {title}")
+    # Save in cache
     cache["posted_ids"].append(video_id)
     save_cache(cache)
+
+    # Print video URL
+    fb_response = r.json()
+    video_url = f"https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{fb_response.get('id')}"
+    print(f"[SUCCESS] Posted video: {title}")
+    print(f"📺 Video URL: {video_url}")
 
 # --- MAIN ---
 def main():
