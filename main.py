@@ -3,8 +3,9 @@ import os
 import json
 import subprocess
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 import base64
+import requests
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
@@ -21,7 +22,7 @@ if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN, YOUTU
 cookies_path = Path("cookies.txt")
 cookies_path.write_bytes(base64.b64decode(YOUTUBE_COOKIES_B64))
 
-# --- CACHE ---
+# --- CACHE UTILITIES ---
 def load_cache():
     if Path(CACHE_FILE).exists():
         try:
@@ -35,18 +36,14 @@ def save_cache(cache):
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
 
-# --- FETCH VIDEOS PAST 24H ---
-def fetch_videos_past_24h():
-    import requests
-    now = datetime.utcnow()
-    yesterday = now - timedelta(days=1)
+# --- FETCH LATEST VIDEOS ---
+def fetch_latest_videos(max_results=5):
     url = "https://www.googleapis.com/youtube/v3/search"
     params = {
         "part": "snippet",
         "channelId": CHANNEL_ID,
         "order": "date",
-        "publishedAfter": yesterday.isoformat("T") + "Z",
-        "maxResults": 10,
+        "maxResults": max_results,
         "type": "video",
         "key": YOUTUBE_API_KEY,
     }
@@ -59,7 +56,8 @@ def fetch_videos_past_24h():
         snippet = item["snippet"]
         title = snippet["title"]
         description = snippet.get("description", "")
-        videos.append({"id": vid, "title": title, "description": description})
+        publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
+        videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
     return videos
 
 # --- DOWNLOAD VIDEO ---
@@ -78,16 +76,13 @@ def download_video(video_id):
 
 # --- UPLOAD TO FACEBOOK ---
 def upload_to_facebook(file_path, title, description, cache):
-    import requests
     video_id = Path(file_path).stem
 
-    # Skip if already posted
     if video_id in cache["posted_ids"]:
         print(f"⏩ Already posted: {title}")
         return
 
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
-
     with open(file_path, "rb") as f:
         r = requests.post(
             url,
@@ -95,8 +90,8 @@ def upload_to_facebook(file_path, title, description, cache):
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
                 "description": description,
-                "published": True,                  # Publish immediately
-                "privacy": '{"value":"EVERYONE"}'   # Public
+                "published": True,
+                "privacy": '{"value":"EVERYONE"}'
             },
             files={"source": f}
         )
@@ -104,11 +99,10 @@ def upload_to_facebook(file_path, title, description, cache):
     fb_response = r.json()
     print(f"DEBUG: Facebook response: {fb_response}")
 
-    # Raise error if upload failed
     if not r.ok or "error" in fb_response:
         raise RuntimeError(f"Facebook API error: {fb_response.get('error')}")
 
-    # ✅ Update cache with YouTube video ID
+    # Update cache
     cache["posted_ids"].append(video_id)
     save_cache(cache)
 
@@ -122,29 +116,35 @@ def main():
     if "posted_ids" not in cache:
         cache["posted_ids"] = []
 
-    videos = fetch_videos_past_24h()
+    videos = fetch_latest_videos()
     if not videos:
-        print("No new videos in the past 24 hours.")
+        print("No videos found.")
+        return
+
+    # Filter only videos not in cache
+    new_videos = [v for v in videos if v["id"] not in cache["posted_ids"]]
+    if not new_videos:
+        print("No new videos to post.")
         return
 
     # Post oldest first
-    for video in reversed(videos):
+    for video in reversed(new_videos):
         print(f"🎬 Processing: {video['title']} ({video['id']})")
         try:
             file_path = download_video(video["id"])
             upload_to_facebook(file_path, video["title"], video["description"], cache)
             
-            # Delete local video after successful upload
+            # Delete local file
             if Path(file_path).exists():
                 Path(file_path).unlink()
                 print(f"🗑 Deleted local file: {file_path}")
 
         except subprocess.CalledProcessError:
-            print(f"⚠️ Skipping video {video['id']} (requires login or failed download)")
+            print(f"⚠️ Skipping video {video['id']} (failed download or requires login)")
         except Exception as e:
             print(f"⚠️ Error processing video {video['id']}: {e}")
 
-    print(f"✅ Done. {len(videos)} videos processed today.")
+    print(f"✅ Done. {len(new_videos)} new videos processed.")
 
 if __name__ == "__main__":
     main()
