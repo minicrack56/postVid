@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import os
 import json
-import requests
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
+import base64
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
@@ -12,9 +12,14 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 CHANNEL_ID = "UC_i8X3p8oZNaik8X513Zn1Q"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
+YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES")  # base64-encoded cookies
 
-if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN]):
+if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN, YOUTUBE_COOKIES_B64]):
     raise RuntimeError("❌ Missing one of the required environment variables.")
+
+# --- Restore cookies.txt ---
+cookies_path = Path("cookies.txt")
+cookies_path.write_bytes(base64.b64decode(YOUTUBE_COOKIES_B64))
 
 # --- CACHE ---
 def load_cache():
@@ -30,8 +35,9 @@ def save_cache(cache):
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
 
-# --- FETCH VIDEOS ---
+# --- FETCH VIDEOS PAST 24H ---
 def fetch_videos_past_24h():
+    import requests
     now = datetime.utcnow()
     yesterday = now - timedelta(days=1)
     url = "https://www.googleapis.com/youtube/v3/search"
@@ -60,7 +66,14 @@ def fetch_videos_past_24h():
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
     output_file = f"{video_id}.mp4"
-    subprocess.run(["yt-dlp", "-f", "mp4", "-o", output_file, url], check=True)
+    cmd = [
+        "yt-dlp",
+        "--cookies", "cookies.txt",
+        "-f", "b[ext=mp4]",
+        "-o", output_file,
+        url
+    ]
+    subprocess.run(cmd, check=True)
     return output_file
 
 # --- UPLOAD TO FACEBOOK ---
@@ -100,8 +113,11 @@ def main():
     # Post oldest first
     for video in reversed(videos):
         print(f"🎬 Processing: {video['title']} ({video['id']})")
-        file_path = download_video(video["id"])
-        upload_to_facebook(file_path, video["title"], video["description"], cache)
+        try:
+            file_path = download_video(video["id"])
+            upload_to_facebook(file_path, video["title"], video["description"], cache)
+        except subprocess.CalledProcessError:
+            print(f"⚠️ Skipping video {video['id']} (requires login or failed download)")
 
     print(f"✅ Done. {len(videos)} videos processed today.")
 
