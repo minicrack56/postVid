@@ -49,59 +49,44 @@ def fetch_latest_videos(max_results=5):
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
         title = snippet["title"]
+        description = snippet.get("description", "")
         publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
-        videos.append({"id": vid, "title": title, "publishedAt": publish_time})
+        videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
     return videos
 
-# --- DOWNLOAD VIDEO (normal quality) ---
 # --- DOWNLOAD VIDEO ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
     yt = YouTube(url)
-
-    # Try to get 360p progressive MP4 (normal quality, with audio)
-    stream = yt.streams.filter(progressive=True, file_extension="mp4", res="360p").first()
-
-    # If 360p not available, fallback to highest progressive
+    # Progressive stream with normal/medium quality (480p if available)
+    stream = yt.streams.filter(progressive=True, file_extension="mp4", res="480p").first()
     if not stream:
-        stream = yt.streams.filter(progressive=True, file_extension="mp4").order_by("resolution").desc().first()
-
-    if not stream:
-        raise RuntimeError(f"No valid progressive MP4 stream found for video {video_id}")
-
+        # fallback to highest available if 480p not found
+        stream = yt.streams.get_highest_resolution()
     output_file = f"{video_id}.mp4"
     stream.download(filename=output_file)
-
-    # Debug: print file details
-    file_size = Path(output_file).stat().st_size
-    print(f"✅ Downloaded {output_file} | resolution={stream.resolution}, filesize={file_size/1024/1024:.2f} MB")
-
-    if file_size < 500 * 1024:  # less than 500 KB
-        raise RuntimeError(f"Downloaded file too small, likely corrupted: {output_file}")
-
     return output_file
 
 # --- UPLOAD TO FACEBOOK ---
-# --- UPLOAD TO FACEBOOK ---
-def upload_to_facebook(file_path, title, cache):
+def upload_to_facebook(file_path, title, description, cache):
     video_id = Path(file_path).stem
 
     if video_id in cache["posted_ids"]:
         print(f"⏩ Already posted: {title}")
         return
 
-    # Upload video
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
     with open(file_path, "rb") as f:
         r = requests.post(
             url,
-            params={"access_token": FACEBOOK_PAGE_ACCESS_TOKEN},
-            data={
+            params={
+                "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
-                "description": title,  # Only YouTube title as description
-                "published": "true",
+                "description": description,
+                "published": True,
+                "privacy": '{"value":"EVERYONE"}'
             },
-            files={"source": f},
+            files={"source": f}
         )
 
     fb_response = r.json()
@@ -129,17 +114,20 @@ def main():
         print("No videos found.")
         return
 
+    # Filter only videos not in cache
     new_videos = [v for v in videos if v["id"] not in cache["posted_ids"]]
     if not new_videos:
         print("No new videos to post.")
         return
 
-    for video in reversed(new_videos):  # Post oldest first
+    # Post oldest first
+    for video in reversed(new_videos):
         print(f"🎬 Processing: {video['title']} ({video['id']})")
         try:
             file_path = download_video(video["id"])
-            upload_to_facebook(file_path, video["title"], cache)
+            upload_to_facebook(file_path, video["title"], video["description"], cache)
 
+            # Delete local file
             if Path(file_path).exists():
                 Path(file_path).unlink()
                 print(f"🗑 Deleted local file: {file_path}")
