@@ -53,11 +53,11 @@ def fetch_latest_videos(max_results=5):
         videos.append({"id": vid, "title": title, "publishedAt": publish_time})
     return videos
 
-# --- DOWNLOAD VIDEO ---
+# --- DOWNLOAD VIDEO (normal quality) ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
     yt = YouTube(url)
-    stream = yt.streams.get_highest_resolution()
+    stream = yt.streams.filter(progressive=True, file_extension="mp4").order_by("resolution").asc().first()
     output_file = f"{video_id}.mp4"
     stream.download(filename=output_file)
     return output_file
@@ -98,6 +98,28 @@ def upload_to_facebook(file_path, title, cache):
     print(f"[SUCCESS] Posted video: {title}")
     print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{video_fb_id}")
 
+    # --- Upload thumbnail ---
+    thumb_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+    thumb_resp = requests.get(thumb_url, stream=True)
+    if thumb_resp.status_code != 200:
+        thumb_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+        thumb_resp = requests.get(thumb_url, stream=True)
+
+    if thumb_resp.ok:
+        thumb_file = f"{video_id}_thumb.jpg"
+        with open(thumb_file, "wb") as t:
+            for chunk in thumb_resp.iter_content(1024):
+                t.write(chunk)
+
+        thumb_url_fb = f"https://graph.facebook.com/v21.0/{video_fb_id}/thumbnails"
+        thumb_upload = requests.post(
+            thumb_url_fb,
+            params={"access_token": FACEBOOK_PAGE_ACCESS_TOKEN},
+            files={"source": open(thumb_file, "rb")}
+        )
+        print(f"DEBUG: Thumbnail upload response: {thumb_upload.json()}")
+        Path(thumb_file).unlink()
+
 # --- MAIN ---
 def main():
     cache = load_cache()
@@ -109,20 +131,17 @@ def main():
         print("No videos found.")
         return
 
-    # Filter only videos not in cache
     new_videos = [v for v in videos if v["id"] not in cache["posted_ids"]]
     if not new_videos:
         print("No new videos to post.")
         return
 
-    # Post oldest first
-    for video in reversed(new_videos):
+    for video in reversed(new_videos):  # Post oldest first
         print(f"🎬 Processing: {video['title']} ({video['id']})")
         try:
             file_path = download_video(video["id"])
             upload_to_facebook(file_path, video["title"], cache)
 
-            # Delete local file
             if Path(file_path).exists():
                 Path(file_path).unlink()
                 print(f"🗑 Deleted local file: {file_path}")
