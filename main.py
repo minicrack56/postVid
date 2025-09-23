@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import os
 import json
-import subprocess
 from pathlib import Path
 from datetime import datetime
 import requests
+from pytube import YouTube
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
@@ -56,14 +56,10 @@ def fetch_latest_videos(max_results=5):
 # --- DOWNLOAD VIDEO ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
+    yt = YouTube(url)
+    stream = yt.streams.get_highest_resolution()
     output_file = f"{video_id}.mp4"
-    cmd = [
-        "yt-dlp",
-        "-f", "b[ext=mp4]",
-        "-o", output_file,
-        url
-    ]
-    subprocess.run(cmd, check=True)
+    stream.download(filename=output_file)
     return output_file
 
 # --- UPLOAD TO FACEBOOK ---
@@ -81,7 +77,7 @@ def upload_to_facebook(file_path, title, cache):
             params={
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
-                "description": title,  # Use YouTube title as description
+                "description": title,  # Only YouTube title as description
                 "published": True,
                 "privacy": '{"value":"EVERYONE"}'
             },
@@ -125,14 +121,12 @@ def main():
         try:
             file_path = download_video(video["id"])
             upload_to_facebook(file_path, video["title"], cache)
-            
+
             # Delete local file
             if Path(file_path).exists():
                 Path(file_path).unlink()
                 print(f"🗑 Deleted local file: {file_path}")
 
-        except subprocess.CalledProcessError:
-            print(f"⚠️ Skipping video {video['id']} (failed download)")
         except Exception as e:
             print(f"⚠️ Error processing video {video['id']}: {e}")
 
