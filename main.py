@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import requests
-import yt_dlp  # make sure to install: pip install yt-dlp
+from pytubefix import YouTube
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
@@ -54,22 +54,19 @@ def fetch_latest_videos(max_results=5):
         videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
     return videos
 
-# --- DOWNLOAD VIDEO USING YT-DLP ---
+# --- DOWNLOAD VIDEO ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
+    yt = YouTube(url)
+    # Get a medium/normal quality progressive stream (prefer 480p)
+    stream = yt.streams.filter(progressive=True, file_extension="mp4", res="480p").first()
+    if not stream:
+        # fallback to highest available progressive stream
+        stream = yt.streams.filter(progressive=True, file_extension="mp4").order_by('resolution').desc().first()
+    if not stream:
+        raise RuntimeError(f"No downloadable video streams found for {video_id}")
     output_file = f"{video_id}.mp4"
-
-    ydl_opts = {
-        "format": "best[ext=mp4]+bestaudio[ext=m4a]/best",  # normal/medium quality
-        "outtmpl": output_file,
-        "merge_output_format": "mp4",
-        "quiet": True,
-        "noprogress": True
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-
+    stream.download(filename=output_file)
     return output_file
 
 # --- UPLOAD TO FACEBOOK ---
