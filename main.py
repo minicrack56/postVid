@@ -3,17 +3,17 @@ import os
 import json
 import subprocess
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 import base64
 import requests
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
+CHANNEL_ID = "UC_i8X3p8oZNaik8X513Zn1Q"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
-YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES")  # base64-encoded cookies
+YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES_B64")  # base64-encoded cookies
 
 if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN, YOUTUBE_COOKIES_B64]):
     raise RuntimeError("❌ Missing one of the required environment variables.")
@@ -55,9 +55,14 @@ def fetch_latest_videos(max_results=5):
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
         title = snippet["title"]
-        description = snippet.get("description", "")
+        thumbnail_url = snippet["thumbnails"]["high"]["url"]
         publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
-        videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
+        videos.append({
+            "id": vid,
+            "title": title,
+            "thumbnail_url": thumbnail_url,
+            "publishedAt": publish_time
+        })
     return videos
 
 # --- DOWNLOAD VIDEO ---
@@ -67,33 +72,51 @@ def download_video(video_id):
     cmd = [
         "yt-dlp",
         "--cookies", "cookies.txt",
-        "-f", "b[ext=mp4]",
+        "-f", "bestvideo+bestaudio/best",  # best quality
         "-o", output_file,
         url
     ]
-    subprocess.run(cmd, check=True)
-    return output_file
+    try:
+        subprocess.run(cmd, check=True)
+        print(f"[SUCCESS] Downloaded: {output_file}")
+        return output_file
+    except subprocess.CalledProcessError:
+        print(f"⚠️ Failed to download video {video_id}. Possible expired cookies.")
+        return None
+
+# --- DOWNLOAD THUMBNAIL ---
+def download_thumbnail(thumbnail_url, video_id):
+    response = requests.get(thumbnail_url)
+    if response.status_code == 200:
+        file_path = f"{video_id}_thumb.jpg"
+        with open(file_path, "wb") as f:
+            f.write(response.content)
+        return file_path
+    print(f"⚠️ Failed to download thumbnail for {video_id}")
+    return None
 
 # --- UPLOAD TO FACEBOOK ---
-def upload_to_facebook(file_path, title, description, cache):
-    video_id = Path(file_path).stem
-
+def upload_to_facebook(video_file, thumbnail_file, title, cache):
+    video_id = Path(video_file).stem
     if video_id in cache["posted_ids"]:
         print(f"⏩ Already posted: {title}")
-        return
+        return False
 
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
-    with open(file_path, "rb") as f:
+    with open(video_file, "rb") as f_video, open(thumbnail_file, "rb") as f_thumb:
         r = requests.post(
             url,
             params={
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
-                "description": description,
+                "description": title,  # Only the YouTube title as caption
                 "published": True,
                 "privacy": '{"value":"EVERYONE"}'
             },
-            files={"source": f}
+            files={
+                "source": f_video,
+                "thumb": f_thumb
+            }
         )
 
     fb_response = r.json()
@@ -102,20 +125,18 @@ def upload_to_facebook(file_path, title, description, cache):
     if not r.ok or "error" in fb_response:
         raise RuntimeError(f"Facebook API error: {fb_response.get('error')}")
 
-    # Update cache
+    # Update cache after successful upload
     cache["posted_ids"].append(video_id)
     save_cache(cache)
 
-    video_fb_id = fb_response.get("id") or fb_response.get("video_id")
+    video_fb_id = fb_response.get("id")
     print(f"[SUCCESS] Posted video: {title}")
     print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{video_fb_id}")
+    return True
 
 # --- MAIN ---
 def main():
     cache = load_cache()
-    if "posted_ids" not in cache:
-        cache["posted_ids"] = []
-
     videos = fetch_latest_videos()
     if not videos:
         print("No videos found.")
@@ -130,19 +151,25 @@ def main():
     # Post oldest first
     for video in reversed(new_videos):
         print(f"🎬 Processing: {video['title']} ({video['id']})")
-        try:
-            file_path = download_video(video["id"])
-            upload_to_facebook(file_path, video["title"], video["description"], cache)
-            
-            # Delete local file
-            if Path(file_path).exists():
-                Path(file_path).unlink()
-                print(f"🗑 Deleted local file: {file_path}")
+        video_file = download_video(video["id"])
+        if not video_file:
+            continue
 
-        except subprocess.CalledProcessError:
-            print(f"⚠️ Skipping video {video['id']} (failed download or requires login)")
+        thumbnail_file = download_thumbnail(video["thumbnail_url"], video["id"])
+        if not thumbnail_file:
+            # If thumbnail fails, still upload video without thumbnail
+            thumbnail_file = None
+
+        try:
+            upload_to_facebook(video_file, thumbnail_file if thumbnail_file else video_file, video["title"], cache)
         except Exception as e:
-            print(f"⚠️ Error processing video {video['id']}: {e}")
+            print(f"⚠️ Error uploading video {video['id']}: {e}")
+        finally:
+            # Delete local files
+            if Path(video_file).exists():
+                Path(video_file).unlink()
+            if thumbnail_file and Path(thumbnail_file).exists():
+                Path(thumbnail_file).unlink()
 
     print(f"✅ Done. {len(new_videos)} new videos processed.")
 
