@@ -13,7 +13,7 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 CHANNEL_ID = "UC_i8X3p8oZNaik8X513Zn1Q"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
-YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES_B64")  # base64-encoded cookies
+YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES")  # base64-encoded cookies
 
 if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN, YOUTUBE_COOKIES_B64]):
     raise RuntimeError("❌ Missing one of the required environment variables.")
