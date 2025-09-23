@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import requests
-from pytubefix import YouTube  # make sure pytubefix is installed
+from pytubefix import YouTube
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
@@ -12,7 +12,7 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
-YOUTUBE_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN")  # just the poToken string
+YOUTUBE_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN")  # Only the poToken string
 
 if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN, YOUTUBE_PO_TOKEN]):
     raise RuntimeError("❌ Missing one of the required environment variables.")
@@ -55,12 +55,11 @@ def fetch_latest_videos(max_results=5):
         videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
     return videos
 
-# --- DOWNLOAD VIDEO USING pytubefix WITH PO TOKEN ---
+# --- DOWNLOAD VIDEO USING PO TOKEN ---
 def download_video(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
-    yt = YouTube(url, use_po_token=True, po_token=YOUTUBE_PO_TOKEN)  # poToken authentication
+    yt = YouTube(url, use_po_token=True, po_token=YOUTUBE_PO_TOKEN)
 
-    # Progressive stream with medium quality (480p)
     stream = yt.streams.filter(progressive=True, file_extension="mp4", res="480p").first()
     if not stream:
         stream = yt.streams.get_highest_resolution()
@@ -107,9 +106,6 @@ def upload_to_facebook(file_path, title, description, cache):
 # --- MAIN ---
 def main():
     cache = load_cache()
-    if "posted_ids" not in cache:
-        cache["posted_ids"] = []
-
     videos = fetch_latest_videos()
     if not videos:
         print("No videos found.")
