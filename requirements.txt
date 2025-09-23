@@ -1,4 +1,4 @@
-requests
-pytubefix
+requests>=2.31.0
+git+https://github.com/JuanBindez/pytubefix.git@main#egg=pytubefix
 google-api-python-client
 
