@@ -9,7 +9,7 @@ from pytube import YouTube
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CHANNEL_ID = "UC_i8X3p8oZNaik8X513Zn1Q"
+CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 
