@@ -3,7 +3,7 @@ import os
 import json
 import subprocess
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 import base64
 import requests
 
@@ -55,9 +55,8 @@ def fetch_latest_videos(max_results=5):
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
         title = snippet["title"]
-        description = snippet.get("description", "")
         publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
-        videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
+        videos.append({"id": vid, "title": title, "publishedAt": publish_time})
     return videos
 
 # --- DOWNLOAD VIDEO ---
@@ -75,12 +74,8 @@ def download_video(video_id):
     return output_file
 
 # --- UPLOAD TO FACEBOOK ---
-def upload_to_facebook(file_path, title, description, cache):
+def upload_to_facebook(file_path, title, cache):
     video_id = Path(file_path).stem
-
-    if video_id in cache["posted_ids"]:
-        print(f"⏩ Already posted: {title}")
-        return
 
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
     with open(file_path, "rb") as f:
@@ -89,7 +84,7 @@ def upload_to_facebook(file_path, title, description, cache):
             params={
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
                 "title": title,
-                "description": description,
+                "description": title,  # <-- Only use YouTube title as caption
                 "published": True,
                 "privacy": '{"value":"EVERYONE"}'
             },
@@ -130,10 +125,16 @@ def main():
     # Post oldest first
     for video in reversed(new_videos):
         print(f"🎬 Processing: {video['title']} ({video['id']})")
+
+        # Skip download if already in cache
+        if video['id'] in cache["posted_ids"]:
+            print(f"⏩ Already posted: {video['title']}")
+            continue
+
         try:
             file_path = download_video(video["id"])
-            upload_to_facebook(file_path, video["title"], video["description"], cache)
-            
+            upload_to_facebook(file_path, video["title"], cache)
+
             # Delete local file
             if Path(file_path).exists():
                 Path(file_path).unlink()
