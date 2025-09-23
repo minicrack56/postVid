@@ -55,16 +55,9 @@ def fetch_latest_videos(max_results=5):
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
         title = snippet["title"]
-        description = snippet.get("description", "")
         publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
-        thumbnail_url = snippet["thumbnails"]["high"]["url"]  # High quality thumbnail
-        videos.append({
-            "id": vid,
-            "title": title,
-            "description": description,
-            "publishedAt": publish_time,
-            "thumbnail": thumbnail_url
-        })
+        # Only use title as description
+        videos.append({"id": vid, "title": title, "description": title, "publishedAt": publish_time})
     return videos
 
 # --- DOWNLOAD VIDEO ---
@@ -74,52 +67,37 @@ def download_video(video_id):
     cmd = [
         "yt-dlp",
         "--cookies", "cookies.txt",
-        "-f", "b[ext=mp4]",
+        "-f", "b[ext=mp4]",  # best quality mp4
         "-o", output_file,
         url
     ]
     subprocess.run(cmd, check=True)
     return output_file
 
-# --- DOWNLOAD THUMBNAIL ---
-def download_thumbnail(url, video_id):
-    response = requests.get(url)
-    if response.status_code == 200:
-        thumb_file = f"{video_id}.jpg"
-        with open(thumb_file, "wb") as f:
-            f.write(response.content)
-        return thumb_file
-    return None
-
-# --- UPLOAD TO FACEBOOK (thumbnail added only) ---
-def upload_to_facebook(file_path, title, description, thumbnail_file, cache):
+# --- UPLOAD TO FACEBOOK ---
+def upload_to_facebook(file_path, title, description, cache):
     video_id = Path(file_path).stem
+
     if video_id in cache["posted_ids"]:
         print(f"⏩ Already posted: {title}")
         return
 
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
-    files = {"source": open(file_path, "rb")}
-    if thumbnail_file and Path(thumbnail_file).exists():
-        files["thumb"] = open(thumbnail_file, "rb")
-
-    r = requests.post(
-        url,
-        params={
-            "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
-            "title": title,
-            "description": description,
-            "published": True
-        },
-        files=files
-    )
+    with open(file_path, "rb") as f:
+        r = requests.post(
+            url,
+            params={
+                "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
+                "title": title,
+                "description": description,  # only title
+                "published": True,
+                "privacy": '{"value":"EVERYONE"}'
+            },
+            files={"source": f}
+        )
 
     fb_response = r.json()
     print(f"DEBUG: Facebook response: {fb_response}")
-
-    # Close files
-    for f in files.values():
-        f.close()
 
     if not r.ok or "error" in fb_response:
         raise RuntimeError(f"Facebook API error: {fb_response.get('error')}")
@@ -128,9 +106,9 @@ def upload_to_facebook(file_path, title, description, thumbnail_file, cache):
     cache["posted_ids"].append(video_id)
     save_cache(cache)
 
-    fb_video_id = fb_response.get("id") or fb_response.get("video_id")
+    video_fb_id = fb_response.get("id") or fb_response.get("video_id")
     print(f"[SUCCESS] Posted video: {title}")
-    print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{fb_video_id}")
+    print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{video_fb_id}")
 
 # --- MAIN ---
 def main():
@@ -149,18 +127,17 @@ def main():
         print("No new videos to post.")
         return
 
-    for video in reversed(new_videos):  # post oldest first
+    # Post oldest first
+    for video in reversed(new_videos):
         print(f"🎬 Processing: {video['title']} ({video['id']})")
         try:
-            video_file = download_video(video["id"])
-            thumb_file = download_thumbnail(video["thumbnail"], video["id"])
-            upload_to_facebook(video_file, video["title"], video["description"], thumb_file, cache)
-
-            # Delete local files
-            for f in [video_file, thumb_file]:
-                if f and Path(f).exists():
-                    Path(f).unlink()
-                    print(f"🗑 Deleted local file: {f}")
+            file_path = download_video(video["id"])
+            upload_to_facebook(file_path, video["title"], video["description"], cache)
+            
+            # Delete local file
+            if Path(file_path).exists():
+                Path(file_path).unlink()
+                print(f"🗑 Deleted local file: {file_path}")
 
         except subprocess.CalledProcessError:
             print(f"⚠️ Skipping video {video['id']} (failed download or requires login)")
