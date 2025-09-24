@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 import os
 import json
+import requests
 from pathlib import Path
 from datetime import datetime
-import requests
-from pytubefix import YouTube
+from instaloader import Instaloader, Profile
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CHANNEL_ID = "UCwBV-eg1dAkzrdjqJfyEj0w"
+INSTAGRAM_PROFILE = os.getenv("INSTAGRAM_PROFILE")  # e.g. "public_profile_name"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
-YOUTUBE_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN")  # your poToken string
+MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))  # how many latest posts to check
 
-if not all([YOUTUBE_API_KEY, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN]):
-    raise RuntimeError("❌ Missing one of the required environment variables.")
+if not all([INSTAGRAM_PROFILE, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN]):
+    raise RuntimeError("Missing one of the required environment variables: INSTAGRAM_PROFILE, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN")
 
 # --- CACHE UTILITIES ---
 def load_cache():
@@ -31,128 +30,108 @@ def save_cache(cache):
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
 
-# --- FETCH LATEST VIDEOS ---
-def fetch_latest_videos(max_results=5):
-    url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "part": "snippet",
-        "channelId": CHANNEL_ID,
-        "order": "date",
-        "maxResults": max_results,
-        "type": "video",
-        "key": YOUTUBE_API_KEY,
-    }
-    r = requests.get(url, params=params)
-    r.raise_for_status()
-    items = r.json().get("items", [])
+# --- FETCH LATEST INSTAGRAM VIDEO POSTS ---
+def fetch_latest_instagram_videos(max_results=5):
+    L = Instaloader(download_pictures=False, download_video_thumbnails=False, save_session=False)
+    profile = Profile.from_username(L.context, INSTAGRAM_PROFILE)
+    posts = profile.get_posts()  # newest -> oldest
     videos = []
-    for item in items:
-        vid = item["id"]["videoId"]
-        snippet = item["snippet"]
-        title = snippet["title"]
-        description = snippet.get("description", "")
-        publish_time = datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
-        videos.append({"id": vid, "title": title, "description": description, "publishedAt": publish_time})
+    count = 0
+    for post in posts:
+        if count >= max_results:
+            break
+        # only consider standard video posts (not sidecar images only)
+        if getattr(post, "is_video", False):
+            vid = post.shortcode  # unique id for the post
+            caption = post.caption or ""
+            publish_time = post.date_utc
+            # post.video_url contains the direct video URL (works for public posts)
+            video_url = getattr(post, "video_url", None)
+            if video_url:
+                videos.append({
+                    "id": vid,
+                    "video_url": video_url,
+                    "caption": caption,
+                    "publishedAt": publish_time.isoformat()
+                })
+                count += 1
     return videos
 
-# --- DOWNLOAD VIDEO USING pytubefix ---
-def download_video(video_id):
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    yt = None
-
-    # Try poToken mode first
-    if YOUTUBE_PO_TOKEN:
-        try:
-            yt = YouTube(url, po_token=YOUTUBE_PO_TOKEN)
-        except Exception as e:
-            print(f"⚠️ poToken mode failed, switching to WEB mode: {e}")
-
-    # Fallback to WEB mode
-    if yt is None:
-        try:
-            yt = YouTube(url, use_web=True)
-        except Exception as e:
-            raise RuntimeError(f"WEB mode also failed for {video_id}: {e}")
-
-    # Download stream: progressive 480p if available
-    stream = yt.streams.filter(progressive=True, file_extension="mp4", res="480p").first()
-    if not stream:
-        # fallback to highest resolution
-        stream = yt.streams.get_highest_resolution()
-
-    output_file = f"{video_id}.mp4"
-    stream.download(filename=output_file)
-    return output_file
+# --- DOWNLOAD VIDEO FROM URL (stream to file) ---
+def download_video_from_url(video_url, out_path):
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; instaloader/4.x)"}  # polite UA
+    with requests.get(video_url, headers=headers, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        with open(out_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+    return out_path
 
 # --- UPLOAD TO FACEBOOK ---
-def upload_to_facebook(file_path, title, description, cache):
-    video_id = Path(file_path).stem
-
-    if video_id in cache["posted_ids"]:
-        print(f"⏩ Already posted: {title}")
+def upload_to_facebook(file_path, caption, cache):
+    vid_id = Path(file_path).stem
+    if vid_id in cache["posted_ids"]:
+        print(f"⏩ Already posted: {vid_id}")
         return
 
     url = f"https://graph.facebook.com/v21.0/{FACEBOOK_PAGE_ID}/videos"
+    # Use caption as description. If too long, Facebook will handle it; you can truncate if desired.
+    params = {
+        "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
+        "description": caption,
+        "published": "true",
+        "privacy": '{"value":"EVERYONE"}'
+    }
     with open(file_path, "rb") as f:
-        r = requests.post(
-            url,
-            params={
-                "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
-                "title": title,
-                "description": description,
-                "published": True,
-                "privacy": '{"value":"EVERYONE"}'
-            },
-            files={"source": f}
-        )
+        r = requests.post(url, params=params, files={"source": f})
+    try:
+        r.raise_for_status()
+    except Exception:
+        print("DEBUG: Facebook response:", r.text)
+        raise
 
-    fb_response = r.json()
-    print(f"DEBUG: Facebook response: {fb_response}")
-
-    if not r.ok or "error" in fb_response:
-        raise RuntimeError(f"Facebook API error: {fb_response.get('error')}")
-
-    # Update cache
-    cache["posted_ids"].append(video_id)
+    fb_json = r.json()
+    print(f"[SUCCESS] Posted to Facebook: local file={file_path} fb_response={fb_json}")
+    cache["posted_ids"].append(vid_id)
     save_cache(cache)
-
-    video_fb_id = fb_response.get("id") or fb_response.get("video_id")
-    print(f"[SUCCESS] Posted video: {title}")
-    print(f"📺 Video URL: https://www.facebook.com/{FACEBOOK_PAGE_ID}/videos/{video_fb_id}")
 
 # --- MAIN ---
 def main():
+    print(f"[{datetime.utcnow().isoformat()}] Starting Instagram -> Facebook job")
     cache = load_cache()
     if "posted_ids" not in cache:
         cache["posted_ids"] = []
 
-    videos = fetch_latest_videos()
+    videos = fetch_latest_instagram_videos(MAX_RESULTS)
     if not videos:
-        print("No videos found.")
+        print("No video posts found on Instagram.")
         return
 
-    # Filter only videos not in cache
+    # Filter out already posted by shortcode id
     new_videos = [v for v in videos if v["id"] not in cache["posted_ids"]]
     if not new_videos:
         print("No new videos to post.")
         return
 
-    # Post oldest first
-    for video in reversed(new_videos):
-        print(f"🎬 Processing: {video['title']} ({video['id']})")
+    # Post oldest first (so chronological order)
+    for item in reversed(new_videos):
+        print(f"🎬 Processing IG post: {item['id']}")
         try:
-            file_path = download_video(video["id"])
-            upload_to_facebook(file_path, video["title"], video["description"], cache)
-
-            # Delete local file
-            if Path(file_path).exists():
-                Path(file_path).unlink()
-                print(f"🗑 Deleted local file: {file_path}")
-
+            out_file = f"{item['id']}.mp4"
+            download_video_from_url(item["video_url"], out_file)
+            upload_to_facebook(out_file, item["caption"], cache)
         except Exception as e:
-            print(f"⚠️ Error processing video {video['id']}: {e}")
+            print(f"⚠️ Error processing {item['id']}: {e}")
+        finally:
+            # cleanup local file if exists
+            if Path(f"{item['id']}.mp4").exists():
+                try:
+                    Path(f"{item['id']}.mp4").unlink()
+                except Exception:
+                    pass
 
-    print(f"✅ Done. {len(new_videos)} new videos processed.")
+    print("✅ Done.")
 
 if __name__ == "__main__":
     main()
