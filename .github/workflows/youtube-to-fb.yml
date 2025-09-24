@@ -1,7 +1,7 @@
 name: Daily Instagram -> Facebook
 
 permissions:
-  contents: write  # allows updating posted_cache.json
+  contents: write
 
 on:
   schedule:
@@ -25,20 +25,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Instagram -> Facebook script (login with password)
+      - name: Run Instagram -> Facebook script
         env:
-          INSTAGRAM_PROFILE: ${{ secrets.INSTAGRAM_PROFILE }}
+          INSTAGRAM_PROFILE_URL: ${{ secrets.INSTAGRAM_PROFILE_URL }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           MAX_RESULTS: "5"
-          REQUEST_TIMEOUT: "60"
-
-          # Provide IG credentials (password method)
-          INSTALOADER_USERNAME: ${{ secrets.INSTALOADER_USERNAME }}
-          INSTALOADER_PASSWORD: ${{ secrets.INSTALOADER_PASSWORD }}
-
-          # Optional fallback: session base64 (if you still want it as fallback)
-          INSTALOADER_SESSION_B64: ${{ secrets.INSTALOADER_SESSION_B64 }}
         run: python main.py
 
       - name: Commit updated posted_cache.json
@@ -46,5 +38,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add posted_cache.json
-          git commit -m "Update posted_cache.json [skip ci]" || echo "No changes to commit"
+          git commit -m "Update posted_cache.json [skip ci]" || echo "No changes"
           git push
