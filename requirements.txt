@@ -1,4 +1,5 @@
-requests>=2.31.0
+requests
+telethon
 yt-dlp
 google-api-python-client
 
