@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    - cron: '0 8 * * *'   # runs daily at 08:00 UTC
+    - cron: '0 8 * * *'
   workflow_dispatch:
 
 jobs:
@@ -25,7 +25,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Instagram -> Facebook script
+      - name: Run Instagram -> Facebook script (login with password)
         env:
           INSTAGRAM_PROFILE: ${{ secrets.INSTAGRAM_PROFILE }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
@@ -33,12 +33,12 @@ jobs:
           MAX_RESULTS: "5"
           REQUEST_TIMEOUT: "60"
 
-          # Preferred: session-based auth (create locally and store base64 in secret)
+          # Provide IG credentials (password method)
           INSTALOADER_USERNAME: ${{ secrets.INSTALOADER_USERNAME }}
-          INSTALOADER_SESSION_B64: ${{ secrets.INSTALOADER_SESSION_B64 }}
+          INSTALOADER_PASSWORD: ${{ secrets.INSTALOADER_PASSWORD }}
 
-          # Optional fallback (not recommended if you have session file)
-          # INSTALOADER_PASSWORD: ${{ secrets.INSTALOADER_PASSWORD }}
+          # Optional fallback: session base64 (if you still want it as fallback)
+          INSTALOADER_SESSION_B64: ${{ secrets.INSTALOADER_SESSION_B64 }}
         run: python main.py
 
       - name: Commit updated posted_cache.json
