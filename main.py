@@ -1,29 +1,24 @@
 #!/usr/bin/env python3
 import os
 import json
-import time
+import asyncio
 from pathlib import Path
 from datetime import datetime
 import requests
-import asyncio
-import subprocess
 from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")  # e.g., @trailer
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "60"))
 
-# Telegram auth
-TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID"))
-TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Or use phone-based login
-TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")      # e.g., '@trailer'
-
-if not all([FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN, TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL]):
-    raise RuntimeError("Missing one or more required environment variables.")
+# --- Validate required env vars ---
+if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN]):
+    raise RuntimeError("Missing required environment variables.")
 
 # --- Cache helpers ---
 def load_cache():
@@ -39,33 +34,27 @@ def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)
 
-# --- Fetch latest Telegram videos ---
-async def fetch_telegram_videos_async(max_results=5):
-    async with TelegramClient('anon', TELEGRAM_API_ID, TELEGRAM_API_HASH) as client:
-        await client.start(bot_token=TELEGRAM_BOT_TOKEN)
-        channel = await client.get_entity(TELEGRAM_CHANNEL)
-        posts = await client.get_messages(channel, limit=max_results)
-        videos = []
-        for msg in posts:
-            if msg.video:
-                videos.append({
-                    "id": str(msg.id),
-                    "video_url": f"https://t.me/{TELEGRAM_CHANNEL.lstrip('@')}/{msg.id}",
-                    "caption": msg.message or "",
-                    "publishedAt": msg.date.isoformat()
-                })
-        return videos
+# --- Fetch latest videos from Telegram channel ---
+async def fetch_telegram_videos(max_results=5):
+    # You need TELEGRAM_API_ID and TELEGRAM_API_HASH
+    TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID"))
+    TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
 
-def fetch_telegram_videos(max_results=5):
-    return asyncio.run(fetch_telegram_videos_async(max_results))
+    client = TelegramClient('bot', TELEGRAM_API_ID, TELEGRAM_API_HASH)
+    await client.start(bot_token=TELEGRAM_BOT_TOKEN)
 
-# --- Download video using yt-dlp ---
-def download_video(video_url, output_file):
-    cmd = ["yt-dlp", "-f", "mp4", "-o", output_file, video_url]
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"yt-dlp failed: {e}")
+    entity = await client.get_entity(TELEGRAM_CHANNEL)
+    history = await client.get_messages(entity, limit=max_results)
+
+    videos = []
+    for msg in history:
+        if msg.video:
+            vid_id = str(msg.id)
+            video_url = await msg.download_media(file=f"{vid_id}.mp4")  # download locally
+            caption = msg.message or ""
+            videos.append({"id": vid_id, "file_path": video_url, "caption": caption})
+    await client.disconnect()
+    return videos
 
 # --- Upload to Facebook ---
 def upload_to_facebook(file_path, caption, cache):
@@ -83,55 +72,37 @@ def upload_to_facebook(file_path, caption, cache):
     }
     with open(file_path, "rb") as f:
         r = requests.post(url, params=params, files={"source": f}, timeout=120)
-    try:
-        r.raise_for_status()
-    except Exception:
-        print("DEBUG: Facebook response:", r.text)
-        raise
-
+    r.raise_for_status()
     fb_json = r.json()
     print(f"[SUCCESS] Posted to Facebook: local file={file_path} fb_response={fb_json}")
+
     cache.setdefault("posted_ids", []).append(vid_id)
     save_cache(cache)
+
+    # Delete local file
+    try:
+        Path(file_path).unlink()
+    except Exception:
+        pass
 
 # --- Main ---
 def main():
     print(f"[{datetime.utcnow().isoformat()}] Starting Telegram -> Facebook job")
     cache = load_cache()
-    if "posted_ids" not in cache:
-        cache["posted_ids"] = []
 
-    try:
-        videos = fetch_telegram_videos(MAX_RESULTS)
-    except Exception as e:
-        print(f"⚠️ Failed to fetch Telegram videos: {e}")
-        return
+    async def runner():
+        videos = await fetch_telegram_videos(MAX_RESULTS)
+        if not videos:
+            print("No video posts found on Telegram.")
+            return
+        for item in reversed(videos):
+            print(f"🎬 Processing Telegram video: {item['id']}")
+            try:
+                upload_to_facebook(item["file_path"], item["caption"], cache)
+            except Exception as e:
+                print(f"⚠️ Error processing {item['id']}: {e}")
 
-    if not videos:
-        print("No video posts found on Telegram.")
-        return
-
-    new_videos = [v for v in videos if v["id"] not in cache["posted_ids"]]
-    if not new_videos:
-        print("No new videos to post.")
-        return
-
-    for item in reversed(new_videos):
-        print(f"🎬 Processing Telegram post: {item['id']}")
-        out_file = f"{item['id']}.mp4"
-        try:
-            download_video(item["video_url"], out_file)
-            upload_to_facebook(out_file, item["caption"], cache)
-        except Exception as e:
-            print(f"⚠️ Error processing {item['id']}: {e}")
-        finally:
-            p = Path(out_file)
-            if p.exists():
-                try:
-                    p.unlink()
-                except Exception:
-                    pass
-
+    asyncio.run(runner())
     print("✅ Done.")
 
 if __name__ == "__main__":
