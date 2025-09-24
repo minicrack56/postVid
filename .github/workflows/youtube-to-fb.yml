@@ -1,47 +1,39 @@
-name: Daily YouTube to Facebook
+name: Daily Instagram -> Facebook
 
 permissions:
-  contents: write  # allows updating posted_cache.json
+  contents: write
 
 on:
   schedule:
-    # Runs every day at 08:00 UTC
-    - cron: '0 8 * * *'
-  workflow_dispatch: # Manual run option
+    - cron: '0 8 * * *'   # daily 08:00 UTC
+  workflow_dispatch:
 
 jobs:
-  post_videos:
+  post_instagram:
     runs-on: ubuntu-latest
-
     steps:
-      # 1️⃣ Checkout repo
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup Python
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      # 3️⃣ Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
-          pip install git+https://github.com/JuanBindez/pytubefix.git@main#egg=pytubefix
+          pip install -r requirements.txt
 
-      # 4️⃣ Run main.py
-      - name: Run main.py
+      - name: Run script
         env:
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          INSTAGRAM_PROFILE: ${{ secrets.INSTAGRAM_PROFILE }}   # username of the public IG page
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
-          YOUTUBE_PO_TOKEN: ${{ secrets.YOUTUBE_PO_TOKEN }}
+          MAX_RESULTS: "5"
         run: python main.py
 
-      # 5️⃣ Commit updated posted_cache.json back to repo
-      - name: Commit updated posted_cache.json
+      - name: Commit posted_cache.json
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
