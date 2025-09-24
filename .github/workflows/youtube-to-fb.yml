@@ -1,11 +1,11 @@
 name: Daily Telegram -> Facebook
 
 permissions:
-  contents: write  # allows updating posted_cache.json
+  contents: write
 
 on:
   schedule:
-    - cron: '0 8 * * *'
+    - cron: '0 8 * * *'  # every day at 08:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -27,14 +27,13 @@ jobs:
 
       - name: Run Telegram -> Facebook script
         env:
-          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           MAX_RESULTS: "5"
-          REQUEST_TIMEOUT: "60"
         run: python main.py
 
       - name: Commit updated posted_cache.json
