@@ -1,4 +1,4 @@
 requests>=2.31.0
-instaloader>=4.9
+yt-dlp
 google-api-python-client
 
