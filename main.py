@@ -7,22 +7,18 @@ from datetime import datetime
 import requests
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.tl.types import InputPeerChannel
 
 # --- CONFIG ---
 CACHE_FILE = "posted_cache.json"
+TELEGRAM_SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")  # Use session string now
+TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_CHANNEL_ID"))      # Channel ID instead of name
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "2"))
 
-# Telegram user session
-TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID"))
-TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
-TELEGRAM_SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
-TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_CHANNEL_ID"))  # numeric channel ID
-
 # --- Validate required env vars ---
-if not all([TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_STRING,
-            TELEGRAM_CHANNEL_ID, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN]):
+if not all([TELEGRAM_SESSION_STRING, TELEGRAM_CHANNEL_ID, FACEBOOK_PAGE_ID, FACEBOOK_PAGE_ACCESS_TOKEN]):
     raise RuntimeError("Missing required environment variables.")
 
 # --- Cache helpers ---
@@ -39,23 +35,37 @@ def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)
 
-# --- Fetch latest videos from Telegram channel ---
-async def fetch_telegram_videos(max_results=2):
-    client = TelegramClient(StringSession(TELEGRAM_SESSION_STRING),
-                            TELEGRAM_API_ID,
-                            TELEGRAM_API_HASH)
+# --- Fetch Telegram videos, skipping already posted ---
+async def fetch_telegram_videos(max_results=5):
+    # Provide your API_ID and API_HASH
+    TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID"))
+    TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH"))
 
+    client = TelegramClient(StringSession(TELEGRAM_SESSION_STRING), TELEGRAM_API_ID, TELEGRAM_API_HASH)
     await client.start()
-    entity = await client.get_entity(TELEGRAM_CHANNEL_ID)
-    history = await client.get_messages(entity, limit=max_results)
 
+    entity = InputPeerChannel(channel_id=TELEGRAM_CHANNEL_ID, access_hash=(await client.get_entity(TELEGRAM_CHANNEL_ID)).access_hash)
+
+    cache = load_cache()
     videos = []
-    for msg in history:
-        if msg.video or (msg.document and msg.document.mime_type.startswith("video/")):
-            vid_id = str(msg.id)
-            file_path = await msg.download_media(file=f"{vid_id}.mp4")
-            caption = msg.message or ""
-            videos.append({"id": vid_id, "file_path": file_path, "caption": caption})
+    offset_id = 0
+    while len(videos) < max_results:
+        history = await client.get_messages(entity, limit=100, offset_id=offset_id)
+        if not history:
+            break  # no more messages
+
+        for msg in history:
+            if msg.video:
+                vid_id = str(msg.id)
+                if vid_id in cache.get("posted_ids", []):
+                    continue  # skip already posted
+                video_file = await msg.download_media(file=f"{vid_id}.mp4")
+                caption = msg.message or ""
+                videos.append({"id": vid_id, "file_path": video_file, "caption": caption})
+                if len(videos) >= max_results:
+                    break
+
+        offset_id = history[-1].id  # move to older messages
 
     await client.disconnect()
     return videos
@@ -83,7 +93,7 @@ def upload_to_facebook(file_path, caption, cache):
     cache.setdefault("posted_ids", []).append(vid_id)
     save_cache(cache)
 
-    # Delete local file to keep repo clean
+    # Delete local file
     try:
         Path(file_path).unlink()
     except Exception:
@@ -97,9 +107,9 @@ def main():
     async def runner():
         videos = await fetch_telegram_videos(MAX_RESULTS)
         if not videos:
-            print("No video posts found on Telegram.")
+            print("No new video posts found on Telegram.")
             return
-        for item in reversed(videos):  # oldest → newest
+        for item in reversed(videos):
             print(f"🎬 Processing Telegram video: {item['id']}")
             try:
                 upload_to_facebook(item["file_path"], item["caption"], cache)
