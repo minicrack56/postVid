@@ -12,7 +12,7 @@ from telethon.sessions import StringSession
 CACHE_FILE = "posted_cache.json"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
-MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
+MAX_RESULTS = int(os.getenv("MAX_RESULTS", "2"))
 
 # Telegram user session
 TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID"))
@@ -40,7 +40,7 @@ def save_cache(cache):
         json.dump(cache, f, indent=2)
 
 # --- Fetch latest videos from Telegram channel ---
-async def fetch_telegram_videos(max_results=5):
+async def fetch_telegram_videos(max_results=2):
     client = TelegramClient(StringSession(TELEGRAM_SESSION_STRING),
                             TELEGRAM_API_ID,
                             TELEGRAM_API_HASH)
