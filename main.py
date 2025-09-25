@@ -12,13 +12,13 @@ from telethon.sessions import StringSession
 CACHE_FILE = "posted_cache.json"
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
-MAX_RESULTS = int(os.getenv("MAX_RESULTS", "2"))  # videos per run
+MAX_RESULTS = int(os.getenv("MAX_RESULTS", "2"))
 
 # Telegram user session
 TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID"))
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
 TELEGRAM_SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
-TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_CHANNEL_ID"))  # numeric channel ID
+TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_CHANNEL_ID"))
 
 # --- Validate required env vars ---
 if not all([TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_STRING,
@@ -38,39 +38,6 @@ def load_cache():
 def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)
-
-# --- Fetch all videos from Telegram channel (only collect metadata for published videos) ---
-async def fetch_telegram_videos_metadata(batch_size=50, cache=None):
-    client = TelegramClient(StringSession(TELEGRAM_SESSION_STRING),
-                            TELEGRAM_API_ID,
-                            TELEGRAM_API_HASH)
-    await client.start()
-    entity = await client.get_entity(TELEGRAM_CHANNEL_ID)
-
-    all_videos = []
-    offset_id = 0
-
-    while True:
-        history = await client.get_messages(entity, limit=batch_size, offset_id=offset_id)
-        if not history:
-            break
-
-        for msg in history:
-            if msg.video or (msg.document and msg.document.mime_type.startswith("video/")):
-                vid_id = str(msg.id)
-                # Skip if already posted
-                if vid_id in cache.get("posted_ids", []):
-                    continue
-                caption = msg.message or ""
-                all_videos.append({"id": vid_id, "msg": msg, "caption": caption})
-
-        offset_id = min([m.id for m in history]) - 1
-        if len(history) < batch_size:
-            break
-
-    await client.disconnect()
-    # Sort oldest → newest
-    return sorted(all_videos, key=lambda x: int(x["id"]))
 
 # --- Upload to Facebook ---
 def upload_to_facebook(file_path, caption, cache):
@@ -103,13 +70,38 @@ def main():
     cache = load_cache()
 
     async def runner():
-        videos = await fetch_telegram_videos_metadata(batch_size=50, cache=cache)
-        if not videos:
-            print("No unpublished video posts found on Telegram.")
-            return
+        client = TelegramClient(StringSession(TELEGRAM_SESSION_STRING),
+                                TELEGRAM_API_ID,
+                                TELEGRAM_API_HASH)
+        await client.start()
+        entity = await client.get_entity(TELEGRAM_CHANNEL_ID)
 
-        # Only process up to MAX_RESULTS per run
-        to_publish = videos[:MAX_RESULTS]
+        all_videos = []
+        offset_id = 0
+
+        # Fetch all videos in batches
+        while True:
+            history = await client.get_messages(entity, limit=50, offset_id=offset_id)
+            if not history:
+                break
+
+            for msg in history:
+                if msg.video or (msg.document and msg.document.mime_type.startswith("video/")):
+                    vid_id = str(msg.id)
+                    if vid_id in cache.get("posted_ids", []):
+                        continue
+                    caption = msg.message or ""
+                    all_videos.append({"id": vid_id, "msg": msg, "caption": caption})
+
+            offset_id = min([m.id for m in history]) - 1
+            if len(history) < 50:
+                break
+
+        # Sort oldest → newest
+        all_videos.sort(key=lambda x: int(x["id"]))
+
+        # Only process up to MAX_RESULTS
+        to_publish = all_videos[:MAX_RESULTS]
 
         for item in to_publish:
             vid_id = item["id"]
@@ -121,6 +113,8 @@ def main():
                 upload_to_facebook(file_path, caption, cache)
             except Exception as e:
                 print(f"⚠️ Error processing {vid_id}: {e}")
+
+        await client.disconnect()
 
     asyncio.run(runner())
     print("✅ Done.")
