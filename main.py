@@ -39,46 +39,26 @@ def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)
 
-# --- Fetch all videos from Telegram channel (backfill) ---
+# --- Fetch latest videos from Telegram channel ---
 async def fetch_telegram_videos(max_results=2):
     client = TelegramClient(StringSession(TELEGRAM_SESSION_STRING),
                             TELEGRAM_API_ID,
                             TELEGRAM_API_HASH)
+
     await client.start()
     entity = await client.get_entity(TELEGRAM_CHANNEL_ID)
-    
-    # Fetch a large batch (all unposted videos) to allow backfill
-    history = await client.get_messages(entity, limit=1000)  # adjust if channel is huge
+    history = await client.get_messages(entity, limit=max_results)
 
     videos = []
     for msg in history:
         if msg.video or (msg.document and msg.document.mime_type.startswith("video/")):
             vid_id = str(msg.id)
-            # Only download if not posted yet
-            videos.append({"id": vid_id, "message": msg})
-    
+            file_path = await msg.download_media(file=f"{vid_id}.mp4")
+            caption = msg.message or ""
+            videos.append({"id": vid_id, "file_path": file_path, "caption": caption})
+
     await client.disconnect()
-
-    # Filter out already posted
-    cache = load_cache()
-    unposted = [v for v in videos if v["id"] not in cache.get("posted_ids", [])]
-
-    # Take only the newest `max_results`
-    selected = list(reversed(unposted))[:max_results]
-
-    # Download media for selected videos
-    result = []
-    client = TelegramClient(StringSession(TELEGRAM_SESSION_STRING),
-                            TELEGRAM_API_ID,
-                            TELEGRAM_API_HASH)
-    await client.start()
-    for v in selected:
-        msg = v["message"]
-        file_path = await msg.download_media(file=f"{msg.id}.mp4")
-        caption = msg.message or ""
-        result.append({"id": str(msg.id), "file_path": file_path, "caption": caption})
-    await client.disconnect()
-    return result
+    return videos
 
 # --- Upload to Facebook ---
 def upload_to_facebook(file_path, caption, cache):
@@ -103,6 +83,7 @@ def upload_to_facebook(file_path, caption, cache):
     cache.setdefault("posted_ids", []).append(vid_id)
     save_cache(cache)
 
+    # Delete local file to keep repo clean
     try:
         Path(file_path).unlink()
     except Exception:
@@ -116,7 +97,7 @@ def main():
     async def runner():
         videos = await fetch_telegram_videos(MAX_RESULTS)
         if not videos:
-            print("No new unposted videos found on Telegram.")
+            print("No video posts found on Telegram.")
             return
         for item in reversed(videos):  # oldest → newest
             print(f"🎬 Processing Telegram video: {item['id']}")
